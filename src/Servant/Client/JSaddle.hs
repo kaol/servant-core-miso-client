@@ -7,6 +7,7 @@ module Servant.Client.JSaddle
   , ClientM
   , runClientM
   , runClientM'
+  , withClientM
 
     -- * Configuration
   , ClientEnv(..)
@@ -16,5 +17,6 @@ module Servant.Client.JSaddle
   , module Servant.Client.Core.Reexport
   ) where
 
-import Servant.Client.Internal.JSaddleXhrClient
+import Servant.Client.JSaddle.Internal.Client
+import Servant.Client.JSaddle.Internal.Types
 import Servant.Client.Core.Reexport

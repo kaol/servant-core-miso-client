@@ -40,8 +40,11 @@ library
   hs-source-dirs:   src
   ghc-options:      -Wall
   exposed-modules:
-    Servant.Client.Internal.JSaddleXhrClient
     Servant.Client.JSaddle
+  other-modules:
+    Servant.Client.JSaddle.Internal.Client
+    Servant.Client.JSaddle.Internal.Fetch
+    Servant.Client.JSaddle.Internal.Types
 
   -- Bundled with GHC: Lower bound to not force re-installs
   -- text and mtl are bundled starting with GHC-8.4
@@ -71,6 +74,9 @@ library
     , semigroupoids       >=5.3.1   && <6.1
     , string-conversions  >=0.3     && <0.5
     , transformers-base   >=0.4.4   && <0.5
+    , servant
+    , mmorph
+    , kan-extensions
 
   if impl(ghc >=8.0)
     ghc-options: -Wno-redundant-constraints
