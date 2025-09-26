@@ -19,7 +19,7 @@ import           Control.Exception
 import           Control.Monad
                  (unless)
 import           Control.Monad.Catch
-                 (catch, throwM)
+                 (catch)
 import           Control.Monad.Codensity
 import           Control.Monad.Error.Class
                  (MonadError (..))
@@ -118,7 +118,7 @@ performRequest acceptStatuses domc req = do
   burl <- asks baseUrl
   rinit <- asks requestInit >>= flip runDOM domc
   fetch <- performFetch req burl rinit `runDOM` domc `catch` \e@(JS.PromiseRejected _) ->
-    throwM $ ConnectionError $ toException e
+    throwError $ ConnectionError $ toException e
   resp <- toResponse domc fetch
 
   let status = statusCode (responseStatusCode resp)
@@ -132,7 +132,7 @@ performWithStreamingRequest domc req k = do
   burl <- asks baseUrl
   rinit <- asks requestInit >>= flip runDOM domc
   performStreamingRequest domc req burl rinit k `catch` \e@(JS.PromiseRejected _) ->
-    throwM $ ConnectionError $ toException e
+    throwError $ ConnectionError $ toException e
 
 mkFailureResponse :: BaseUrl -> Request -> ResponseF BSL.ByteString -> ClientError
 mkFailureResponse burl request =
