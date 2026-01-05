@@ -31,7 +31,6 @@ import           Data.Bifunctor
                  (bimap)
 import           Data.ByteString.Builder
                  (toLazyByteString)
-import qualified Data.ByteString.Char8             as BS
 import qualified Data.ByteString.Lazy              as BSL
 import qualified Data.ByteString.Lazy              as L
 import           Data.CaseInsensitive
@@ -48,19 +47,14 @@ import           Data.Proxy
 import qualified Data.Sequence                     as Seq
 import qualified Data.Text.Encoding                as T
 import           GHC.Generics
-import qualified GHCJS.Buffer                      as Buffer
-import           GHCJS.DOM.Types
-                 (JSM, JSContextRef, askJSM, runJSM)
-import qualified GHCJS.DOM.Types                   as JS
-import qualified JavaScript.TypedArray.ArrayBuffer as ArrayBuffer
-import qualified Language.Javascript.JSaddle.Types as JSaddle
+import qualified Miso                              as Miso
 import           Network.HTTP.Media
                  (renderHeader)
 import           Network.HTTP.Types
                  (Status, http11, mkStatus, renderQuery)
 
 import           Servant.Client.Core
-import qualified Miso as Miso
+import qualified Servant.Client.Internal.ByteString as B
 
 -- Note: assuming encoding UTF-8
 
@@ -91,11 +85,11 @@ client :: HasClient ClientM api => Proxy api -> Client ClientM api
 client api = api `clientIn` (Proxy :: Proxy ClientM)
 
 newtype ClientM a = ClientM
-  { fromClientM :: ReaderT ClientEnv (ExceptT ClientError JSM) a }
+  { fromClientM :: ReaderT ClientEnv (ExceptT ClientError IO) a }
   deriving ( Functor, Applicative, Monad, MonadIO, Generic
            , MonadReader ClientEnv, MonadError ClientError)
-deriving instance MonadThrow JSM => MonadThrow ClientM
-deriving instance MonadCatch JSM => MonadCatch ClientM
+deriving instance MonadThrow IO => MonadThrow ClientM
+deriving instance MonadCatch IO => MonadCatch ClientM
 
 -- | Try clients in order, last error is preserved.
 instance Alt ClientM where
@@ -105,33 +99,25 @@ instance RunClient ClientM where
   throwClientError = throwError
 #if MIN_VERSION_servant_client_core(0,18,1)
   runRequestAcceptStatus acceptStatuses r = do
-    d <- ClientM askJSM
-    performRequest (fromMaybe [] acceptStatuses) d r
+    performRequest (fromMaybe [] acceptStatuses) r
 #else
   runRequest r = do
-    d <- ClientM askJSM
-    performRequest [] d r
+    performRequest [] r
 #endif
 
-runClientM :: ClientM a -> ClientEnv -> JSM (Either ClientError a)
+runClientM :: ClientM a -> ClientEnv -> IO (Either ClientError a)
 runClientM cm env = runExceptT $ flip runReaderT env $ fromClientM cm
 
-performRequest :: [Status] -> JSContextRef -> Request -> ClientM Response
-performRequest _ jsmc req = do
+performRequest :: [Status] -> Request -> ClientM Response
+performRequest _ req = do
   burl <- asks baseUrl
   waiter <- liftIO $ newEmptyMVar
   maybeBody <- case toBody req of
     Nothing -> pure Nothing
     Just body -> do
-      -- Reason for copy: hopefully offset will be 0 and length b == len
-      -- FIXME: use a typed array constructor that accepts offset and length and skip the copy
-      b <- flip runJSM jsmc $ do
-        (b, _offset, _len) <- JSaddle.ghcjsPure $ Buffer.fromByteString $ BS.copy $ L.toStrict body
-        b' <- Buffer.thaw b
-        JSaddle.ghcjsPure (Buffer.getArrayBuffer b')
-      pure $ Just $ JS.pToJSVal b
+      liftIO $ Just <$> B.sendToJS (L.toStrict body)
 
-  Miso.fetch
+  liftIO $ Miso.fetch
     (toUrl burl req)
     (Miso.ms $ T.decodeUtf8Lenient $ requestMethod req)
     maybeBody
@@ -144,31 +130,27 @@ performRequest _ jsmc req = do
     (liftIO . putMVar waiter . Right)
     (liftIO . putMVar waiter . Left)
     Miso.ARRAY_BUFFER
-    `runJSM` jsmc
 
   liftIO (takeMVar waiter) >>= either
     (\resp -> do
-        body <- L.fromStrict . T.encodeUtf8 <$> (JS.fromJSValUnchecked (Miso.body resp) `runJSM` jsmc)
+        body <- liftIO $ L.fromStrict . T.encodeUtf8 <$> (Miso.fromJSValUnchecked (Miso.body resp))
         throwError . mkFailureResponse burl req . fromMisoResponse $ resp { Miso.body = body }
     )
     (\resp -> do
-        body <- flip runJSM jsmc $
-          ArrayBuffer.unsafeFreeze (JS.pFromJSVal $ Miso.body resp) >>=
-          JSaddle.ghcjsPure . Buffer.createFromArrayBuffer >>=
-          fmap L.fromStrict . JSaddle.ghcjsPure . (Buffer.toByteString 0 Nothing)
-        pure $ fromMisoResponse $ resp { Miso.body = body }
+        body <- liftIO $ B.getFromJS $ Miso.body resp
+        pure $ fromMisoResponse $ resp { Miso.body = L.fromStrict body }
     )
 
-toUrl :: BaseUrl -> Request -> JS.JSString
+toUrl :: BaseUrl -> Request -> Miso.MisoString
 toUrl burl request =
-  let pathS = JS.toJSString $ T.decodeUtf8Lenient $ L.toStrict $ toLazyByteString $
+  let pathS = Miso.ms $ T.decodeUtf8Lenient $ L.toStrict $ toLazyByteString $
               requestPath request
       queryS =
-          JS.toJSString $ T.decodeUtf8Lenient $
+          Miso.ms $ T.decodeUtf8Lenient $
           renderQuery True $
           toList $
           requestQueryString request
-  in JS.toJSString (showBaseUrl burl) <> pathS <> queryS :: JS.JSString
+  in Miso.ms (showBaseUrl burl) <> pathS <> queryS
 
 fromMisoResponse :: Miso.Response a -> ResponseF a
 fromMisoResponse resp =
