@@ -30,8 +30,7 @@ import           Control.Monad.Trans.Except
 import           Data.Bifunctor
                  (bimap)
 import           Data.ByteString.Builder
-                 (toLazyByteString)
-import qualified Data.ByteString.Lazy              as BSL
+                 (toLazyByteString, byteString)
 import qualified Data.ByteString.Lazy              as L
 import           Data.CaseInsensitive
                  (mk, original)
@@ -51,7 +50,7 @@ import qualified Miso                              as Miso
 import           Network.HTTP.Media
                  (renderHeader)
 import           Network.HTTP.Types
-                 (Status, http11, mkStatus, renderQuery)
+                 (Status, http11, mkStatus, urlEncodeBuilder)
 
 import           Servant.Client.Core
 import qualified Servant.Client.Internal.ByteString as B
@@ -143,14 +142,18 @@ performRequest _ req = do
 
 toUrl :: BaseUrl -> Request -> Miso.MisoString
 toUrl burl request =
-  let pathS = Miso.ms $ T.decodeUtf8Lenient $ L.toStrict $ toLazyByteString $
-              requestPath request
-      queryS =
-          Miso.ms $ T.decodeUtf8Lenient $
-          renderQuery True $
-          toList $
-          requestQueryString request
-  in Miso.ms (showBaseUrl burl) <> pathS <> queryS
+  let pathS = requestPath request
+      -- Servant.Client.Core has escaped the values already
+      queryS = foldr
+        (\(first,(k,v)) b ->
+            (if first then "?" else "&")
+            <> urlEncodeBuilder True k
+            <> maybe mempty (("=" <>) . byteString) v
+            <> b
+        ) mempty $ zip (True:repeat False) $ toList (requestQueryString request)
+
+  in Miso.ms (showBaseUrl burl) <>
+     (Miso.ms $ T.decodeUtf8Lenient $ L.toStrict $ toLazyByteString $ pathS <> queryS)
 
 fromMisoResponse :: Miso.Response a -> ResponseF a
 fromMisoResponse resp =
@@ -163,11 +166,11 @@ fromMisoResponse resp =
   , responseBody = Miso.body resp
   }
 
-mkFailureResponse :: BaseUrl -> Request -> ResponseF BSL.ByteString -> ClientError
+mkFailureResponse :: BaseUrl -> Request -> ResponseF L.ByteString -> ClientError
 mkFailureResponse burl request =
     FailureResponse (bimap (const ()) f request)
   where
-    f b = (burl, BSL.toStrict $ toLazyByteString b)
+    f b = (burl, L.toStrict $ toLazyByteString b)
 
 toBody :: Request -> Maybe L.ByteString
 toBody request = case requestBody request of
