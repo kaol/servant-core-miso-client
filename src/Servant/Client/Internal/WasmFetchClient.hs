@@ -128,11 +128,11 @@ performRequest _ req = do
       url     = toUrl burl req
 
       acceptHdrs =
-        map (\mt -> ("Accept", T.pack $ show $ renderHeader mt))
+        map (\mt -> ("Accept", TE.decodeUtf8 $ renderHeader mt))
             (toList $ requestAccept req)
       ctHdr =
         maybe []
-              (\(_, mt) -> [("Content-Type", T.pack $ show $ renderHeader mt)])
+              (\(_, mt) -> [("Content-Type", TE.decodeUtf8 $ renderHeader mt)])
               (requestBody req)
       extraHdrs =
         map (\(k, v) -> ( TE.decodeUtf8Lenient (original k)
